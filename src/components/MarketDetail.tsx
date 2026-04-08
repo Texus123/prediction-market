@@ -26,7 +26,7 @@ interface MarketDetailProps {
     side: "yes" | "no",
     amount: number,
     shares: number
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 function formatVolume(volume: number): string {

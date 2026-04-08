@@ -3,6 +3,7 @@ import { Market } from "../types/market";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Loader2 } from "lucide-react";
 
 interface TradingPanelProps {
   market: Market;
@@ -11,22 +12,28 @@ interface TradingPanelProps {
     side: "yes" | "no",
     amount: number,
     shares: number
-  ) => void;
+  ) => void | Promise<void>;
 }
 
 export function TradingPanel({ market, onTrade }: TradingPanelProps) {
   const [side, setSide] = useState<"yes" | "no">("yes");
   const [amount, setAmount] = useState<string>("10");
+  const [trading, setTrading] = useState(false);
 
   const price = side === "yes" ? market.yesPrice : market.noPrice;
   const shares = Number(amount) > 0 ? Number(amount) / price : 0;
   const potentialPayout = shares * 1;
   const potentialProfit = potentialPayout - Number(amount);
 
-  const handleTrade = () => {
-    if (Number(amount) > 0) {
-      onTrade(market.id, side, Number(amount), shares);
-      setAmount("10");
+  const handleTrade = async () => {
+    if (Number(amount) > 0 && !trading) {
+      setTrading(true);
+      try {
+        await onTrade(market.id, side, Number(amount), shares);
+        setAmount("10");
+      } finally {
+        setTrading(false);
+      }
     }
   };
 
@@ -114,14 +121,18 @@ export function TradingPanel({ market, onTrade }: TradingPanelProps) {
 
       <Button
         onClick={handleTrade}
-        disabled={Number(amount) <= 0}
+        disabled={Number(amount) <= 0 || trading}
         className={`w-full text-sm font-semibold ${
           side === "yes"
             ? "bg-emerald-500 hover:bg-emerald-600"
             : "bg-red-500 hover:bg-red-600"
         }`}
       >
-        Buy {side === "yes" ? "Yes" : "No"}
+        {trading ? (
+          <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Processing...</>
+        ) : (
+          <>Buy {side === "yes" ? "Yes" : "No"}</>
+        )}
       </Button>
     </div>
   );

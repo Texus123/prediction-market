@@ -1,14 +1,14 @@
 import { useState, useMemo } from "react";
 import "./App.css";
-import { Market, Category, Position } from "./types/market";
-import { markets, initialPositions } from "./data/markets";
+import { Market, Category } from "./types/market";
+import { useSupabase } from "./hooks/useSupabase";
 import { Header } from "./components/Header";
 import { MarketCard } from "./components/MarketCard";
 import { CategoryFilter } from "./components/CategoryFilter";
 import { MarketDetail } from "./components/MarketDetail";
 import { Portfolio } from "./components/Portfolio";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, Flame } from "lucide-react";
+import { TrendingUp, Flame, Loader2 } from "lucide-react";
 
 function App() {
   const [activeView, setActiveView] = useState<"markets" | "portfolio">(
@@ -17,8 +17,15 @@ function App() {
   const [selectedMarket, setSelectedMarket] = useState<Market | null>(null);
   const [activeCategory, setActiveCategory] = useState<Category>("All");
   const [searchQuery, setSearchQuery] = useState("");
-  const [balance, setBalance] = useState(10000);
-  const [positions, setPositions] = useState<Position[]>(initialPositions);
+
+  const {
+    markets,
+    positions,
+    balance,
+    loading,
+    error,
+    handleTrade,
+  } = useSupabase();
 
   const filteredMarkets = useMemo(() => {
     return markets.filter((market) => {
@@ -29,60 +36,52 @@ function App() {
         .includes(searchQuery.toLowerCase());
       return matchesCategory && matchesSearch;
     });
-  }, [activeCategory, searchQuery]);
+  }, [activeCategory, searchQuery, markets]);
 
   const trendingMarkets = useMemo(() => {
     return markets.filter((m) => m.trending).slice(0, 4);
-  }, []);
+  }, [markets]);
 
-  const handleTrade = (
+  const onTrade = async (
     marketId: string,
     side: "yes" | "no",
     amount: number,
     shares: number
   ) => {
-    if (amount > balance) return;
-
-    setBalance((prev) => prev - amount);
-
-    const market = markets.find((m) => m.id === marketId);
-    if (!market) return;
-
-    const existingIdx = positions.findIndex(
-      (p) => p.marketId === marketId && p.side === side
-    );
-
-    if (existingIdx >= 0) {
-      setPositions((prev) => {
-        const updated = [...prev];
-        const existing = updated[existingIdx];
-        const totalShares = existing.shares + shares;
-        const totalCost =
-          existing.shares * existing.avgPrice + shares * (amount / shares);
-        updated[existingIdx] = {
-          ...existing,
-          shares: totalShares,
-          avgPrice: totalCost / totalShares,
-          currentPrice: side === "yes" ? market.yesPrice : market.noPrice,
-        };
-        return updated;
-      });
-    } else {
-      setPositions((prev) => [
-        ...prev,
-        {
-          marketId,
-          marketTitle: market.title,
-          side,
-          shares,
-          avgPrice: amount / shares,
-          currentPrice: side === "yes" ? market.yesPrice : market.noPrice,
-        },
-      ]);
-    }
+    await handleTrade(marketId, side, amount, shares);
   };
 
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+          <p className="text-sm text-zinc-400">Loading markets...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-white">
+        <div className="rounded-xl border border-red-800 bg-red-950/30 p-6 text-center">
+          <p className="text-sm text-red-400">Failed to load data</p>
+          <p className="mt-1 text-xs text-red-500">{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-500"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (selectedMarket) {
+    const latestMarket =
+      markets.find((m) => m.id === selectedMarket.id) ?? selectedMarket;
     return (
       <div className="min-h-screen bg-zinc-950 text-white">
         <Header
@@ -96,9 +95,9 @@ function App() {
           activeView={activeView}
         />
         <MarketDetail
-          market={selectedMarket}
+          market={latestMarket}
           onBack={() => setSelectedMarket(null)}
-          onTrade={handleTrade}
+          onTrade={onTrade}
         />
       </div>
     );
@@ -131,7 +130,7 @@ function App() {
 
       <main className="mx-auto max-w-7xl px-4 py-6">
         {/* Trending Banner */}
-        {!searchQuery && activeCategory === "All" && (
+        {!searchQuery && activeCategory === "All" && trendingMarkets.length > 0 && (
           <div className="mb-8">
             <div className="mb-4 flex items-center gap-2">
               <Flame className="h-5 w-5 text-orange-400" />
