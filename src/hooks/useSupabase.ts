@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Market, Position } from "../types/market";
 import { fetchMarkets, fetchPositions, fetchBalance, executeTrade } from "../lib/api";
+import { markets as mockMarkets, initialPositions as mockPositions } from "../data/markets";
 
 interface UseSupabaseReturn {
   markets: Market[];
@@ -25,7 +26,9 @@ export function useSupabase(): UseSupabaseReturn {
   const [error, setError] = useState<string | null>(null);
   const marketsMapRef = useRef(new Map<string, Market>());
 
-  // Load initial data
+  const usingFallbackRef = useRef(false);
+
+  // Load initial data — try Supabase first, fall back to mock data
   useEffect(() => {
     async function loadData() {
       try {
@@ -37,10 +40,13 @@ export function useSupabase(): UseSupabaseReturn {
           fetchBalance(),
         ]);
 
+        if (marketsData.length === 0) {
+          throw new Error("No markets found — tables may not be seeded");
+        }
+
         setMarkets(marketsData);
         setBalance(balanceData);
 
-        // Build markets map for position lookups
         const map = new Map<string, Market>();
         marketsData.forEach((m) => map.set(m.id, m));
         marketsMapRef.current = map;
@@ -48,9 +54,19 @@ export function useSupabase(): UseSupabaseReturn {
         const positionsData = await fetchPositions(map);
         setPositions(positionsData);
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to load data";
-        setError(message);
-        console.error("Supabase load error:", err);
+        console.warn("Supabase unavailable, using mock data:", err);
+        usingFallbackRef.current = true;
+
+        // Fall back to mock data
+        setMarkets(mockMarkets);
+        setBalance(10000);
+        setPositions(mockPositions);
+
+        const map = new Map<string, Market>();
+        mockMarkets.forEach((m) => map.set(m.id, m));
+        marketsMapRef.current = map;
+
+        setError(null);
       } finally {
         setLoading(false);
       }
@@ -75,10 +91,51 @@ export function useSupabase(): UseSupabaseReturn {
       amount: number,
       shares: number
     ) => {
+      if (amount > balance) return;
+
       const market = marketsMapRef.current.get(marketId);
       if (!market) return;
 
       const price = side === "yes" ? market.yesPrice : market.noPrice;
+
+      if (usingFallbackRef.current) {
+        // Local-only trade (mock mode)
+        setBalance((prev) => prev - amount);
+
+        const existingIdx = positions.findIndex(
+          (p) => p.marketId === marketId && p.side === side
+        );
+
+        if (existingIdx >= 0) {
+          setPositions((prev) => {
+            const updated = [...prev];
+            const existing = updated[existingIdx];
+            const totalShares = existing.shares + shares;
+            const totalCost =
+              existing.shares * existing.avgPrice + shares * (amount / shares);
+            updated[existingIdx] = {
+              ...existing,
+              shares: totalShares,
+              avgPrice: totalCost / totalShares,
+              currentPrice: price,
+            };
+            return updated;
+          });
+        } else {
+          setPositions((prev) => [
+            ...prev,
+            {
+              marketId,
+              marketTitle: market.title,
+              side,
+              shares,
+              avgPrice: amount / shares,
+              currentPrice: price,
+            },
+          ]);
+        }
+        return;
+      }
 
       try {
         const { newBalance } = await executeTrade(
@@ -91,8 +148,6 @@ export function useSupabase(): UseSupabaseReturn {
         );
 
         setBalance(newBalance);
-
-        // Refresh positions from DB
         await refreshPositions();
       } catch (err) {
         const message = err instanceof Error ? err.message : "Trade failed";
@@ -100,7 +155,7 @@ export function useSupabase(): UseSupabaseReturn {
         setError(message);
       }
     },
-    [balance, refreshPositions]
+    [balance, positions, refreshPositions]
   );
 
   return {
